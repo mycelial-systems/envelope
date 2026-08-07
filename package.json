@@ -28,7 +28,7 @@
     "@bicycle-codes/identity": "^0.9.7",
     "@bicycle-codes/message": "^0.9.1",
     "json-canon": "^1.0.1",
-    "uint8arrays": "^5.0.2"
+    "uint8arrays": "^6.1.1"
   },
   "devDependencies": {
     "@substrate-system/tapzero": "^0.10.13",
