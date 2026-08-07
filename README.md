@@ -24,6 +24,7 @@ This is assuming that all the users of the app are well behaved, and not giving 
 
 <!-- toc -->
 
+- [install](#install)
 - [metaphors](#metaphors)
 - [keys](#keys)
 - [an envelope](#an-envelope)
@@ -32,13 +33,23 @@ This is assuming that all the users of the app are well behaved, and not giving 
   * [Envelope](#envelope)
   * [Device](#device)
   * [EncryptedContent](#encryptedcontent)
+  * [Content](#content)
 - [API](#api)
   * [create](#create)
   * [wrapMessage](#wrapmessage)
   * [decryptMessage](#decryptmessage)
   * [verify](#verify)
+  * [isExpired](#isexpired)
+  * [encryptContent](#encryptcontent)
+  * [ALGORITHM](#algorithm)
 
 <!-- tocstop -->
+
+## install
+
+```sh
+npm i -S @substrate-system/envelope
+```
 
 ## metaphors
 If we stick with comparisons to common physical activities, this is very similar to the postal service. The envelope shows the recipient, and it needs a stamp (the signature here), but it hides the sender's ID.
@@ -70,7 +81,7 @@ Just a document signed by the recipient, like this:
     expiration: 456,
     recipient: 'my-username',
     signature: '123abc',
-    author: 'did:key:abc'
+    author: 'did:key:z123abc'
 }
 ```
 
@@ -78,22 +89,43 @@ Just a document signed by the recipient, like this:
 
 ```js
 // the message
-{ envelope, content: 'encrypted text' }
-// sender ID is in the content, so it is only readable by
+{
+    envelope,
+    message: {
+        key: { deviceName: 'encrypted-key' },
+        content: 'encrypted text'
+    }
+}
+// sender ID is in the encrypted content, so it is only readable by
 //   the recipient
 ```
 
 ## types
 
 ### Envelope
+`create` fills in `expiration` for you, so it is always present on an
+envelope. A value of `0` means it never expires.
+
 ```ts
 import type { SignedMessage } from '@substrate-system/message'
 
 type Envelope = SignedMessage<{
     seq:number,
-    expiration?:number,  // default to 0, which means no expiration
+    expiration:number,  // 0 means no expiration
     recipient:string,  // the recipient's username
 }>
+```
+
+`SignedMessage` adds a `signature` and an `author` DID, so the full shape is
+
+```ts
+{
+    seq:number,
+    expiration:number,
+    recipient:string,
+    signature:string,
+    author:`did:key:z${string}`
+}
 ```
 
 ### Device
@@ -115,9 +147,32 @@ The device name is a 32 character, DNS-friendly hash of the device's DID, the sa
 
 ```ts
 interface EncryptedContent {
-    key:Record<string, string>,  // { deviceName: 'encrypted-key' }
+    key:Keys,  // { deviceName: 'encrypted-key' }
     content:string  // encrypted text
 }
+```
+
+That map of device name to encrypted key is exported as `Keys`. It shows up
+again on its own, as the second item that [`wrapMessage`](#wrapmessage)
+returns.
+
+```ts
+type Keys = Record<string, string>
+```
+
+### Content
+The plaintext that goes inside an envelope. Create it with `create` from
+[@substrate-system/message](https://github.com/substrate-system/message), so
+that it is signed by the sender.
+
+```ts
+import type { SignedMessage } from '@substrate-system/message'
+
+type Content = SignedMessage<{
+    from:{ username:string },
+    text:string,
+    mentions?:string[],
+}>
 ```
 
 ## API
@@ -192,20 +247,21 @@ This returns an array of
 The sender could save a map of the message's hash to the returned key object. That way they can save the map to some storage, and then look up the key by the hash of the message object.
 
 ### decryptMessage
-Decrypt a given message. Depends on having a keys instance that the message was encrypted to. Throws if the message has no key for your device. Return a `Content` object:
+Decrypt a given message. Depends on having a keys instance that the message was encrypted to. Throws if the message has no key for your device. Return a [`Content`](#content) object:
 ```ts
-type Content = SignedRequest<{
-    from:{ username:string },
-    text:string,
-    mentions?:string[],
-}>
-
-export async function decryptMessage (
+async function decryptMessage (
     keys:RsaKeys,
     msg:EncryptedContent,
     authorKeys?:Keys
 ):Promise<Content>
 ```
+
+> [!NOTE]
+> This does not check the signature on the decrypted content. Decrypting tells
+> you the message was encrypted to one of your devices, not that `from.username`
+> is who they say they are. Call `verify` from
+> [@substrate-system/message](https://github.com/substrate-system/message) on
+> the returned object if you need that.
 
 #### example
 ```ts
@@ -239,7 +295,13 @@ console.log(decrypted.text)
 ```
 
 ### verify
-Check if a given envelope is valid. `currentSeq` is an optional sequence number to use when checking the validity. If `currentSeq` is less than or equal to `seq` in the `envelope`, then this will return `false`.
+Check if a given envelope is valid. This checks the signature, the expiration,
+and optionally a sequence number.
+
+`currentSeq` is an optional sequence number to check against -- the last
+sequence number you have seen from this author. If `seq` in the `envelope` is
+less than or equal to `currentSeq`, then this will return `false`. That is, a
+valid envelope must have a sequence number greater than the last one you saw.
 
 ```ts
 function verify (envelope:Envelope, currentSeq?:number):Promise<boolean>
@@ -257,11 +319,43 @@ test('check that the envelope is valid', async t => {
         'should say a message is invalid if the sequence number is equal')
 
     try {
-        t.equal(await verify('baloney'))
+        await verify('baloney')
     } catch (err) {
         t.ok(err, 'should throw given a malformed message')
     }
 })
+```
+
+### isExpired
+Check if an envelope has expired. An `expiration` of `0` means it never
+expires, so this returns `false`. This is the expiration check that `verify`
+does internally.
+
+```ts
+function isExpired (envelope:Envelope):boolean
+```
+
+### encryptContent
+The lower level function used by [`wrapMessage`](#wrapmessage). Encrypt a string
+with the given symmetric key, and encrypt that key to each of the given
+devices. Use `wrapMessage` unless you need to manage the symmetric
+key yourself.
+
+```ts
+async function encryptContent (
+    key:CryptoKey,
+    data:string,
+    recipient:Device[]
+):Promise<{ key:Keys, content:string }>
+```
+
+### ALGORITHM
+The symmetric algorithm used to encrypt content -- re-exported from
+[@substrate-system/keys](https://github.com/substrate-system/keys) as
+`DEFAULT_SYMM_ALGORITHM`.
+
+```ts
+import { ALGORITHM } from '@substrate-system/envelope'
 ```
 
 ----------------------------------

@@ -16,10 +16,10 @@ import serialize from 'json-canon'
 //
 // {
 //     seq: 0,
-//     expiration: '456',
+//     expiration: 456,
 //     recipient: 'my-identity',
 //     signature: '123abc',
-//     author: 'did:key:abc'
+//     author: 'did:key:z123abc'
 // }
 //
 
@@ -43,7 +43,7 @@ export interface Device {
     publicExchangeKey:string;
 }
 
-type Content = SignedMessage<{
+export type Content = SignedMessage<{
     from:{ username:string },
     text:string,
     mentions?:string[],
@@ -105,6 +105,10 @@ export async function wrapMessage (
 /**
  * Pass in keys, if you are the message author, and thus your keys would not
  * be in the message. If you are the recipient, then your key is in the message.
+ *
+ * Note that this does not check the signature on the decrypted content. Call
+ * `verify` from `@substrate-system/message` if you need to know that the
+ * `from.username` is authentic.
  *
  * @param {RsaKeys} keys The decrypter's keys
  * @param {EncryptedContent} msg The message to decrypt
