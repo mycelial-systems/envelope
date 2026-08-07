@@ -1,5 +1,6 @@
 import { test } from '@substrate-system/tapzero'
-import { Identity } from '@bicycle-codes/identity'
+import { create as createMsg } from '@substrate-system/message'
+import { RsaKeys } from '@substrate-system/keys/rsa'
 import {
     create as createEnvelope,
     verify,
@@ -8,53 +9,51 @@ import {
     EncryptedContent,
     decryptMessage,
     Keys,
-} from '../dist/index.js'
-import { create as createMsg } from '@bicycle-codes/message'
+} from '../src/index.js'
 
 let alicesEnvelope:Envelope
-let alice:InstanceType<typeof Identity>
+let alice:RsaKeys
 
 test('create an envelope', async t => {
-    alice = await Identity.create({
-        humanName: 'alice',
-        humanReadableDeviceName: 'phone'
-    })
-    alicesEnvelope = await createEnvelope(alice.signingKey, {
-        username: alice.username,
+    alice = await RsaKeys.create(true)
+    alicesEnvelope = await createEnvelope(alice.writeKey, {
+        username: 'alice',
         seq: 1
     })
 
     t.equal(alicesEnvelope.seq, 1, 'should have sequence number 0')
     t.ok(alicesEnvelope.signature, 'should create an envelope')
     t.equal(alicesEnvelope.expiration, 0, 'should have 0 expiration by defualt')
-    t.equal(alicesEnvelope.recipient, alice.username,
+    t.equal(alicesEnvelope.recipient, 'alice',
         "alice's username should be on the envelope")
 })
 
 let msgContent:EncryptedContent
 let bobsMsgKeys:Keys
-let bob:Identity
+let bob:RsaKeys
 test('put a message in the envelope', async t => {
-    bob = await Identity.create({
-        humanName: 'bob',
-        humanReadableDeviceName: 'phone'
-    })
+    bob = await RsaKeys.create(true)
 
-    const content = await createMsg(bob.signingKey, {
-        from: { username: bob.username },
+    const content = await createMsg(bob.writeKey, {
+        from: { username: 'bob' },
         text: 'hello'
     })
 
     const [
         { envelope, message },  // the encrypted message content
         keys  // map of sender's device name to encrypted key string
-    ] = await wrapMessage(bob, alice, alicesEnvelope, content)
+    ] = await wrapMessage(
+        [await bob.toJson()],
+        [await alice.toJson()],
+        alicesEnvelope,
+        content
+    )
 
     bobsMsgKeys = keys
     msgContent = message
 
     t.ok(envelope, 'should return the envelope')
-    t.ok(Object.keys(keys).includes(Object.keys(bob.devices)[0]),
+    t.ok(Object.keys(keys).includes(await bob.deviceName),
         "should include bob's device name in the keys object")
     t.equal(envelope.signature, alicesEnvelope.signature,
         'the envelope we get back shoud be equal to what was passed in')
@@ -84,7 +83,7 @@ test('check that the envelope is valid', async t => {
 test('alice can decrypt a message addressed to alice', async t => {
     const decrypted = await decryptMessage(alice, msgContent)
 
-    t.equal(decrypted.from.username, bob.username,
+    t.equal(decrypted.from.username, 'bob',
         "should have bob's username in decrypted message")
     t.equal(decrypted.text, 'hello', 'can decrypt the message')
 })
@@ -93,17 +92,35 @@ test('bob can decrypt a message that he created', async t => {
     const decrypted = await decryptMessage(bob, msgContent, bobsMsgKeys)
 
     t.ok(decrypted, 'should decrypt without error')
-    t.equal(decrypted.from.username, bob.username,
+    t.equal(decrypted.from.username, 'bob',
         'can read the decrypted text')
     t.equal(decrypted.text, 'hello', 'can read decrypted text')
 })
 
+test('round trip non-ASCII text', async t => {
+    const text = 'héllo, 世界 🌱'
+
+    const content = await createMsg(bob.writeKey, {
+        from: { username: 'bob' },
+        text
+    })
+
+    const [{ message }] = await wrapMessage(
+        [await bob.toJson()],
+        [await alice.toJson()],
+        alicesEnvelope,
+        content
+    )
+
+    const decrypted = await decryptMessage(alice, message)
+
+    t.equal(decrypted.text, text,
+        'should decrypt multi-byte characters unchanged')
+})
+
 test("carol cannot read alice's message", async t => {
     t.plan(1)
-    const carol = await Identity.create({
-        humanName: 'carol',
-        humanReadableDeviceName: 'laptop'
-    })
+    const carol = await RsaKeys.create(true)
 
     try {
         await decryptMessage(carol, msgContent)
@@ -111,4 +128,9 @@ test("carol cannot read alice's message", async t => {
     } catch (err) {
         t.ok(err, 'should throw if we use the wrong keys')
     }
+})
+
+test('all done', () => {
+    // @ts-expect-error tests
+    window.testsFinished = true
 })

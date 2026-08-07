@@ -12,9 +12,7 @@
   ],
   "scripts": {
     "lint": "eslint \"./**/*.{ts,js}\"",
-    "build-tests": "esbuild test/index.ts --target=es2020 --bundle --keep-names > test/test-bundle.js",
-    "test-tape-run": "cat test/index.html | tape-run --input=html --static=test | tap-spec",
-    "test": "npm run test-tape-run",
+    "test": "esbuild ./test/index.ts --target=es2020 --bundle --keep-names | tapout --browser chrome",
     "build-cjs": "esbuild src/*.ts --format=cjs --keep-names --outdir=./dist --out-extension:.js=.cjs",
     "build": "mkdir -p ./dist && rm -rf ./dist/* && npm run build-cjs && tsc --project tsconfig.build.json",
     "toc": "markdown-toc --maxdepth 3 -i README.md",
@@ -24,13 +22,13 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@bicycle-codes/crypto-util": "^0.2.3",
-    "@bicycle-codes/identity": "^0.9.7",
-    "@bicycle-codes/message": "^0.9.1",
+    "@substrate-system/keys": "^0.2.43",
+    "@substrate-system/message": "^0.11.5",
     "json-canon": "^1.0.1",
     "uint8arrays": "^6.1.1"
   },
   "devDependencies": {
+    "@substrate-system/tapout": "^0.0.41",
     "@substrate-system/tapzero": "^0.10.13",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
@@ -39,8 +37,6 @@
     "eslint": "^8.57.0",
     "eslint-config-standard": "^17.1.0",
     "markdown-toc": "^1.2.0",
-    "tap-spec": "^5.0.0",
-    "tape-run": "^11.0.0",
     "typescript": "^6.0.3"
   },
   "exports": {
@@ -61,7 +57,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bicycle-codes/envelope.git"
+    "url": "git+https://github.com/substrate-system/envelope.git"
   },
   "keywords": [
     "envelope",
@@ -70,9 +66,9 @@
     "browser"
   ],
   "bugs": {
-    "url": "https://github.com/bicycle-codes/envelope/issues"
+    "url": "https://github.com/substrate-system/envelope/issues"
   },
-  "homepage": "https://github.com/bicycle-codes/envelope",
+  "homepage": "https://github.com/substrate-system/envelope",
   "author": "nichoth <nichoth@nichoth.com> (https://nichoth.com)",
   "license": "SEE LICENSE IN LICENSE"
 }

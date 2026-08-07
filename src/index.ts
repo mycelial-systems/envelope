@@ -1,23 +1,16 @@
 import {
     verify as verifyMsg,
     create as createMsg,
-} from '@bicycle-codes/message'
-import type { SignedMessage } from '@bicycle-codes/message'
+} from '@substrate-system/message'
+import type { SignedMessage } from '@substrate-system/message'
 import {
-    DEFAULT_SYMM_LEN,
+    DEFAULT_SYMM_LENGTH,
     DEFAULT_SYMM_ALGORITHM
-} from '@bicycle-codes/crypto-util/constants'
-import {
-    create as aesGenKey,
-    encrypt as aesEncrypt,
-    decrypt as aesDecrypt,
-} from '@bicycle-codes/crypto-util/webcrypto/aes'
-import {
-    Identity,
-    encryptKey,
-} from '@bicycle-codes/identity'
-import { rsaOperations } from '@bicycle-codes/identity/util'
-import { fromString } from '@bicycle-codes/crypto-util'
+} from '@substrate-system/keys/constants'
+import { AES } from '@substrate-system/keys/aes/index'
+import { RsaKeys, encryptKeyTo } from '@substrate-system/keys/rsa'
+import type { DID } from '@substrate-system/keys/rsa'
+import { toString } from 'uint8arrays'
 import serialize from 'json-canon'
 
 //
@@ -41,6 +34,15 @@ export type Envelope = SignedMessage<{
 // map of device name to encrypted key string
 export type Keys = Record<string, string>
 
+/**
+ * The public keys for a single device. This is the shape returned by
+ * `keys.toJson()` in `@substrate-system/keys`.
+ */
+export interface Device {
+    DID:DID;
+    publicExchangeKey:string;
+}
+
 type Content = SignedMessage<{
     from:{ username:string },
     text:string,
@@ -56,9 +58,9 @@ export interface EncryptedContent {
 /**
  * Encrypt a string and put it into an envelope. The envelope tells us who the
  * recipient of the message is; the message sender is hidden.
- * @param me Your Identity.
- * @param recipient The identity of the recipient, because we need to encrypt
- * the message to the recipient.
+ * @param me Your devices, so you can read your own message later.
+ * @param recipient The recipient's devices, because we need to encrypt the
+ * message to the recipient.
  * @param envelope The envelope we are putting it in
  * @param content The content that will be encrypted to the recipient
  * @returns {[{ envelope:Envelope, message:EncryptedContent }, Keys]}
@@ -68,20 +70,22 @@ export interface EncryptedContent {
  * object because we *don't* want the sender device names to be in the message.
  */
 export async function wrapMessage (
-    me:Identity,
-    recipient:Identity,  // we need to encrypt the message to the recipient
+    me:Device[],
+    recipient:Device[],  // we need to encrypt the message to the recipient
     envelope:Envelope,
     content:Content
 ):Promise<[{
     envelope:Envelope,
     message:EncryptedContent
 }, Keys]> {
-    // encrypt the content *to* the recipient,
-    // use an Identity to get the exchange keys of all the devices
-    //   of the recipient
+    // encrypt the content *to* the recipient -- encrypt the symmetric key
+    // to the exchange key of each of the recipient's devices
 
     // create a key
-    const key = await aesGenKey({ alg: ALGORITHM, length: DEFAULT_SYMM_LEN })
+    const key = await AES.create({
+        alg: ALGORITHM,
+        length: DEFAULT_SYMM_LENGTH
+    })
     // encrypt the key to the recipient,
     // also encrypt the content with the key
     const encryptedContent = await encryptContent(
@@ -102,53 +106,33 @@ export async function wrapMessage (
  * Pass in keys, if you are the message author, and thus your keys would not
  * be in the message. If you are the recipient, then your key is in the message.
  *
- * @param {CryptoKeyPair} keypair The decrypter's keys
+ * @param {RsaKeys} keys The decrypter's keys
  * @param {EncryptedContent} msg The message to decrypt
- * @param {Record<string, string>} [keys] The message author's keys
+ * @param {Keys} [authorKeys] The message author's keys
  * @returns {Promise<Content>}
  */
 export async function decryptMessage (
-    id:InstanceType<typeof Identity>,
+    keys:RsaKeys,
     msg:EncryptedContent,
-    keys?:Record<string, string>
+    authorKeys?:Keys
 ):Promise<Content> {
-    if (keys) {
-        const { deviceName } = id
-        const encryptedKey = keys[deviceName]
-        const decryptedKey = await rsaOperations.decrypt(
-            encryptedKey,
-            id.encryptionKey.privateKey
-        )
+    const deviceName = await keys.deviceName
+    // if we wrote the message, then our key is in `authorKeys`, not
+    //   in the message
+    const encryptedKey = (authorKeys || msg.key)[deviceName]
 
-        const decryptedMsg = await aesDecrypt(
-            msg.content,
-            decryptedKey,
-            ALGORITHM
-        )
+    // this throws if there is no key for this device
+    const decryptedKey = await keys.getAesKey(encryptedKey)
 
-        return JSON.parse(decryptedMsg)
-    }
+    const decrypted = await AES.decrypt(msg.content, decryptedKey)
 
-    const deviceName = id.deviceName
-    const encryptedKey = msg.key[deviceName]
-    const decryptedKey = await rsaOperations.decrypt(
-        encryptedKey,
-        id.encryptionKey.privateKey
-    )
-
-    const decrypted = await aesDecrypt(
-        fromString(msg.content),
-        decryptedKey,
-        ALGORITHM
-    )
-
-    return (JSON.parse(decrypted))
+    return JSON.parse(new TextDecoder().decode(decrypted))
 }
 
 /**
  * Create an envelope -- a certificate. Return a signed certificate object
  *
- * @param crypto odd crypto object
+ * @param {CryptoKeyPair} signingKeypair Your signing keys -- `keys.writeKey`
  * @param {{ username:string, seq:number, expiration?:number }} opts
  *   username: your username (the recipient)
  *   seq: an always incrementing integer
@@ -156,7 +140,6 @@ export async function decryptMessage (
  * @returns {Promise<Envelope>} A serizlizable certificate
  */
 export async function create (
-    // crypto:Implementation,
     signingKeypair:CryptoKeyPair,
     {
         username,
@@ -178,14 +161,18 @@ export async function create (
  *
  * @param key The symmetric key used to encrypt/decrypt
  * @param data The text to encrypt
+ * @param recipient The devices we are encrypting the key to
  * @returns {Promise<{ key:Keys, content:string }>}
  */
 export async function encryptContent (
     key:CryptoKey,
     data:string,
-    recipient:InstanceType<typeof Identity>
+    recipient:Device[]
 ):Promise<{ key:Keys, content:string }> {
-    const encrypted = await aesEncrypt(data, key)
+    const encrypted = toString(
+        await AES.encrypt(new TextEncoder().encode(data), key),
+        'base64pad'
+    )
     const encryptedKeys = await encryptKeys(recipient, key)
 
     return {
@@ -222,16 +209,22 @@ export function isExpired (envelope:Envelope):boolean {
 }
 
 /**
- * Take a given AES key and encrypt it to all the devices in the given identity.
- * @param id The identity we are encrypting to
+ * Take a given AES key and encrypt it to each of the given devices. The
+ * device name is a 32 character hash of the device's DID.
+ *
+ * @param devices The devices we are encrypting to
  * @param key The key we are encrypting
- * @returns {Record<string, string>}
+ * @returns {Promise<Keys>} Map of device name to encrypted key
  */
-async function encryptKeys (id:Identity, key:CryptoKey):Promise<Keys> {
-    const encryptedKeys = {}
-    for await (const deviceName of Object.keys(id.devices)) {
-        const exchange = id.devices[deviceName].encryptionKey
-        encryptedKeys[deviceName] = await encryptKey(key, exchange)
+async function encryptKeys (devices:Device[], key:CryptoKey):Promise<Keys> {
+    const encryptedKeys:Keys = {}
+
+    for (const device of devices) {
+        const deviceName = await RsaKeys.deviceName(device.DID)
+        encryptedKeys[deviceName] = await encryptKeyTo.asString({
+            key,
+            publicKey: device.publicExchangeKey
+        }, 'base64pad')
     }
 
     return encryptedKeys
