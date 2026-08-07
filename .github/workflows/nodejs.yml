@@ -23,7 +23,8 @@ jobs:
           npm run lint
         env:
           CI: true
-      - name: Run tape tests
-        run: |
-          npm run build-tests
-          xvfb-run --server-args="-screen 0 1920x1080x24" npm run test-tape-run
+
+      # No `playwright install` -- Chrome is already on the runner,
+      # and the tests use `tapout --browser chrome`.
+      - name: Run tests
+        run: npm test
