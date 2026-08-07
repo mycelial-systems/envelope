@@ -1,6 +1,6 @@
 {
   "name": "@substrate-system/envelope",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "type": "module",
   "description": "Envelopes that have been authorized by the recipient",
   "directories": {
