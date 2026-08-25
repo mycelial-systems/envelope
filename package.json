@@ -22,7 +22,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@substrate-system/keys": "^0.2.43",
+    "@substrate-system/keys": "^0.3.0",
     "@substrate-system/message": "^0.11.5",
     "json-canon": "^1.0.1",
     "uint8arrays": "^6.1.1"
